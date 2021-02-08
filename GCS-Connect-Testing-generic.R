@@ -1,10 +1,13 @@
 #Google Cloud Connection Setup and Test
 
+#Note: updated so that the default sql query uses the public copy of the public dataset
+
 #This file assumes you have created a service account in your GCP project with owner rights
 #and have downloaded the key to your local system. It also assumes you have enabled the
 #Google Cloud Storage (GCS) and BigQuery APIs and, if you want to see output for list buckets,
-#have created at least one GCS bucket. It further assumes you have duplicated the covid19_aha dataset
-#available from the public datasets into your own project.
+#have created at least one GCS bucket. It originally assumed you had duplicated the covid19_aha dataset
+#available from the public datasets into your own project, but I've commented that code out and
+#replaced it with a SQL query that uses the public dataset instead.
 
 #If you haven't already done so, install the packages below by uncommenting and running the lines.
 #install.packages("googleAuthR")
@@ -32,7 +35,12 @@ gcs_list_buckets(projectId)
 bq_auth(path = "/path/to/your/service/key.json")
 
 #Craft a SQL statement that queries your dataset table and store as a variable
-sql <- "SELECT county_name, state_name, total_hospital_beds FROM `covid_19_aha.hospital_beds`"
+#sql <- "SELECT county_name, state_name, total_hospital_beds FROM `covid_19_aha.hospital_beds`"
+
+#Use the public dataset vs a copy in your project
+
+sql <- "SELECT county_name, state_name, total_hospital_beds FROM `bigquery-public-data.covid19_aha.hospital_beds`"
+
 
 #Run bq_project_query, specifying your project ID and the SQL string you want to run
 #and store it as a variable. Note - due to query caching, you are only billed for the first
