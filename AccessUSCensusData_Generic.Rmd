@@ -1,0 +1,73 @@
+---
+title: "Access US Census Data API"
+author: "Jason Eden"
+date: "2/18/2021"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+
+## Access US Census Data
+
+To start, you'll need to request an access key: https://api.census.gov/data/key_signup.html
+
+Once activiated, you'll receive an email containing your personal key for making API calls. In order to avoid putting them in your code, I had to run through some steps which I'll outline here. Code that is preceded with 3 ### means code you should only have to run one time.
+
+```{r}
+
+###install.packages("tidycensus")
+###install.packages("dotenv")
+
+library(tidycensus)
+library(dotenv)
+library(data.table)
+
+###usethis::edit_r_environ()  #I put a bogus something = 10000000 as a starter
+
+#Note - the census_api_key() function if executed as below will overwrite the .Renviron file you just created.
+#If you have things in there you don't want deleted, copy and paste them somewhere else, or else modify
+#the code below. My guess would be to change overwrite = T to overwrite = F, but as of this moment I
+#have not tested it.
+
+###tidycensus::census_api_key(key="<yourapikeygoeshere>", overwrite = T, install = T)
+
+load_dot_env("~/.Renviron")
+
+```
+
+## Making the API call
+
+Now that you have installed and initialized your API key you should be able to use the tidycensus get_acs() function to pull down detailed - and I **do** mean detailed - US Census data. To get a feel for the options available, check out the lookup table:  
+
+https://api.census.gov/data/2018/acs/acs5/profile/variables.html
+
+So let's say we want to pull the county fips code (a.k.a. geo id) and total number of households from 2018 for every county tracked by the US Census. The variable we are looking for is DP05_0001E according to the lookup table. Full details on how to format the get_acs() function / API call:
+
+https://www.rdocumentation.org/packages/tidycensus/versions/0.11.4/topics/get_acs 
+
+
+```{r}
+
+tidycensus::get_acs(geography = "county",
+                                variables = "DP05_0001E",
+                                year = 2018, survey = "acs5",
+                                output = "wide", geometry = TRUE,
+                                keep_geo_vars=TRUE) -> households
+
+households_tab_raw <- data.table(households[c("GEOID","NAME.x","DP05_0001E")])
+
+households_tab_formatted <- setnames(households_tab_raw, old = c('NAME.x','DP05_0001E'), new = c('county','total_households'))
+
+households_tab_formatted
+
+```
+
+## Success!
+
+We now have a data table that contains the US Census data we are looking for, including the geo ID which we can use to easily join this with other county-level data. 
