@@ -1,0 +1,211 @@
+---
+title: "Descriptive Stats on BigQuery"
+author: "Jason Eden"
+date: "2/24/2021"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Descriptive Stats on BigQuery
+
+The purpose of this document is to go through some typical, basic descriptive statistical analysis on data in BigQuery using R and the bigrquery tool set plus basic R stats tools. Maybe export a dataset to cloud storage, then download the CSV locally? Let's play.
+
+Let's start by loading the libraries and point to our credentials
+
+```{r}
+library(googleAuthR)
+library(googleCloudStorageR)
+library(bigrquery)
+library(tidyverse)
+
+gar_auth_service("/path/key.json", scope = "https://www.googleapis.com/auth/cloud-platform")
+projectId <- "bigquery-public-data"
+bq_auth(path = "/path/key.json")
+
+```
+
+## Examine the Data
+
+Things I want to look at:
+
+```{r}
+#List datasets available in bigquery-public-data (spoiler alert - there's a lot) and then search that output
+#for datasets with covid in the name using grep
+
+publicdata <- bigrquery::bq_project_datasets(projectId)
+
+covidsets <- grep("covid", publicdata, ignore.case = TRUE, value = TRUE)
+
+#take a look at the list
+
+covidsets
+
+```
+
+OK, now we have a list of public datasets, and a subset list of just datasets the are explicitly labeled covid. Let's pick one of those and explore it a bit. 
+
+```{r}
+
+#get a list of the tables in one of the public covid datasets
+
+cvdataset <- "covid19_nyt"
+
+nyttables <- bigrquery::list_tables(projectId, cvdataset)
+
+nyttables
+
+```
+
+Let's take a look at those tables and see if there's anything interesting to explore
+
+```{r}
+
+#create a reference to the table you want to explore
+
+cvtable <- bigrquery::bq_table(projectId, cvdataset, "us_counties")
+
+#download and examine the first few rows to see what's there
+
+cvtable_head <- bigrquery::bq_table_download(cvtable, max_results = 10)
+
+print(cvtable_head)
+
+```
+
+OK, looks like we can pull some meaningful things out of this data. It contains day by day statistics on cumulative covid cases and deaths. What we are missing here is scale in terms of population of each county. I wonder if BigQuery has public data available that we could add in to give us some perspective?
+
+```{r}
+
+#We already have the list of public datasets, so let's look for population data. Census seems like a likely keyword. Let's try it and see what we get:
+
+censussets <- grep("census", publicdata, ignore.case = TRUE, value = TRUE)
+
+censussets
+
+```
+
+Hmm. Maybe census_bureau_usa is the droid we are looking for? Let's check.
+
+```{r}
+#get a list of the tables in one of the public covid datasets
+
+censusdataset <- "census_bureau_usa"
+
+census_tables <- bigrquery::list_tables(projectId, censusdataset)
+
+census_tables
+
+```
+
+Hrm. Actually, not exactly what we were hoping for. I need population by county rather than by zip, and would like to find estimates a little more recent than the 2010 data. Let's keep looking.
+
+```{r}
+#get a list of the tables in one of the public covid datasets - take 2
+
+censusdataset <- "census_bureau_acs"
+
+census_tables <- bigrquery::list_tables(projectId, censusdataset)
+
+census_tables
+```
+
+Ah, we may have found what we're after. Let's take a look at the data in the county_2018_5yr table.
+
+```{r}
+
+#create a reference to the table you want to explore
+
+census_table <- bigrquery::bq_table(projectId, censusdataset, "county_2018_5yr")
+
+#download and examine the first few rows to see what's there
+
+census_table_head <- bigrquery::bq_table_download(census_table, max_results = 10)
+
+print(census_table_head)
+
+
+```
+
+Aha! So we have 2018 population estimates in a field labeled total_pop, and a geo_id field which matches our fips_code field from the covid data, which means we can join these two sets of information together.
+
+Now, here's a cool thing - because all of this data exists in the cloud on a platform that we can manipulate, we don't actually have to pull it down to our laptop in order to do the data munging. We can actually just tell BigQuery to do all of the work and we won't be constrained by the limits of our local system hardware.
+
+Let's start by creating a dataset in our own project to store the newly combined table in.
+
+```{r}
+#create a reference to your own project id
+
+my_project_Id <- "<your-project-id-here>"
+
+#create a reference to a bq_dataset 
+
+my_covid_dataset <- bigrquery::bq_dataset(my_project_Id, "my_new_covid_data")
+
+bigrquery::bq_dataset_create(my_covid_dataset)
+
+mydatasets <- bigrquery::bq_project_datasets(my_project_Id)
+
+mydatasets
+
+#Note: output removed below, as it contains project id.
+
+```
+
+Sweet. So now we have our new dataset created in our GCP project, so let's put some tables in there. I found this easier to keep in the cloud (and not try to automatically download anything) by using the 
+
+```{r}
+
+# Creating a simple table to test, will do the join statement once this is working correctly
+
+SQL_Test <- "CREATE TABLE `<your-project-id-here>.my_new_covid_data.mo_beds` AS SELECT * FROM `bigquery-public-data.covid19_aha.hospital_beds` WHERE state_name = 'Missouri'"
+
+bq_project_query(my_project_Id, SQL_Test)
+
+#create a reference to the table you want to explore
+
+mo_hospital_table <- bigrquery::bq_table(my_project_Id, "my_new_covid_data", "mo_beds")
+
+#download and examine the first few rows to see what's there
+
+mo_hosp_table_head <- bigrquery::bq_table_download(mo_hospital_table, max_results = 10)
+
+print(mo_hosp_table_head)
+
+
+```
+
+Our simple test worked! Now let's get down to the real business at hand:
+
+```{r}
+
+#This is so powerful to just run in BigQuery - if you're not a SQL coder, it's worth learning how to do just to take advantage of this remote powerhouse available to you.
+
+SQL_nyt_join_pop <- "CREATE TABLE `<your-project-id-here>.my_new_covid_data.nyt_pl_pop` AS SELECT nyt.date, nyt.county_fips_code, nyt.county, nyt.state_name, nyt.confirmed_cases, nyt.deaths, census.total_pop FROM `bigquery-public-data.covid19_nyt.us_counties` AS nyt JOIN `bigquery-public-data.census_bureau_acs.county_2018_5yr` AS census ON nyt.county_fips_code = census.geo_id"
+
+#Let's run this query and see if it works!
+
+bq_project_query(my_project_Id, SQL_nyt_join_pop)
+
+#create a reference to the table you want to explore
+
+nyt_plus_pop_table <- bigrquery::bq_table(my_project_Id, "my_new_covid_data", "nyt_pl_pop")
+
+#download and examine the first few rows to see what's there
+
+nyt_plus_pop_table_head <- bigrquery::bq_table_download(nyt_plus_pop_table, max_results = 10)
+
+print(nyt_plus_pop_table_head)
+
+
+```
+
+
+BOOM! We've got a table that has now joined our county population data with the covid stats, and we can start doing some real analysis now. [Don't forget to re-enable service account before continuing]
+
+
