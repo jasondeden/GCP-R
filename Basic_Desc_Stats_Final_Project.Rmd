@@ -1,0 +1,768 @@
+---
+title: "Data Munging and Descriptive Stats"
+author: "Jason Eden"
+date: "04/01/2021"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## You Don't Know Me. You Think You Know Me...
+
+### Descriptive Stats on Public Data
+
+The purpose of this document is to go through some typical, basic data manipulation and descriptive 
+statistical analysis on data using R. The data used was originally pulled from public datasets available
+on Google BigQuery, as documented here:
+
+https://github.com/jasondeden/GCP-R/blob/main/Basic_Desc_Stats_Test_Update01.Rmd
+
+This file picks up right where the localdata file was imported. It has been written to a file and stored
+on GitHub, and this page will start by downloading that data and picking up where the other left off.
+
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(httr)
+library(readr)
+library(DT)   
+```
+
+
+## Grab the Local Data...
+
+### ...From a Remote Location
+
+Hello Github!
+
+```{r}
+
+urlfile <- "https://raw.githubusercontent.com/jasondeden/GCP-R/main/localdata.csv"
+
+myfile <- read_csv(url(urlfile))
+
+localdata <- data.table::as.data.table(myfile)
+
+#print(localdata)
+
+data.table(head(localdata))  #This is from the DT package added in the first code chunk
+
+```
+
+### Get Cozy With the Data
+
+Now let's do some basic descriptive analysis. 
+
+```{r}
+
+#print number of rows
+nrow(localdata)
+
+#print number of columns
+ncol(localdata)
+
+#Print list of column names
+names(localdata)
+
+#Two diff formats - lapply and sapply to get class of each column
+lapply(localdata, class)  #returns a list
+sapply(localdata, class) #returns an array
+
+
+```
+
+Or, potentially replace many lines of code and output with a simple "str" (structure) command:
+
+```{r}
+
+#str returns object class, numrows, and per row name, data class, and first 10 values per column
+str(localdata)
+
+```
+
+A little more digging just to confirm what's in here:
+
+```{r}
+# Get the number of the column for pop_density -- can be used for later subsetting if desired
+which(names(localdata)=="pop_density")
+
+#How many states are represented in our data? Print names of states, then count.
+unique(localdata$state_name)
+
+print("The number of states represented equals:")
+
+length(unique(localdata$state_name))
+
+```
+
+### Raw Data Visualizations
+
+Let's generate a couple of visualizations and see if we can garner any quick insights.
+
+```{r}
+library(ggplot2)
+library(RColorBrewer)
+
+geom_smooth(method="auto", se=TRUE, fullrange=FALSE, level=0.95)
+
+ggplot(localdata, aes(x=total_pop, y=death_per_1k, color=-death_per_1k)) +
+  geom_point() +
+  xlim(0,1000000) +
+  ylim(0,.00001) +
+  ggtitle("Death Rate per Total Population, Loess Regression Line") +
+  geom_smooth(method=loess)
+
+
+ggplot(localdata, aes(x=total_pop, y=death_per_1k,  color=-death_per_1k)) +
+  geom_point() +
+  xlim(0,1000000) +
+  ylim(0,.00001) +
+  ggtitle("Death Rate per Total Population, Linear Regression Line") +
+  geom_smooth(method=lm)
+
+
+
+```
+
+Look at that upward spike as population gets smaller with the Loess regression line! And the definite slant downward for the linear regression line as well (so as county 
+population increases, predicted death rate seems to go down.)
+
+Can we break it out by population density and compare that way? Maybe kernel density estimate is the way to go here? 
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(viridis)
+library(hrbrthemes)
+
+ggplot(localdata, aes(death_per_1k, group=pop_density, fill=pop_density)) +
+  geom_density(adjust=1.5, alpha=.4) +
+  xlim(0,.00001) +
+  ggtitle("Density Distribution of Death Rate Grouped by Population Density") +
+  theme_ipsum()
+  
+
+
+```
+
+It appears that the densely populated counties tend to have lower death rates based on this. Interesting.
+
+### "What-If" ETL Exercise
+
+Let's do a what-if: What if we wanted to simplify our data before messing with it?
+
+```{r}
+#Verify we just have one date value
+unique(localdata$date)
+
+#We probably don't need this for analysis purposes, so if our data were large and we wanted
+#to make is smaller to conserve resources while reading we could drop this
+
+localdata_minus_date <- localdata[,-"date"]
+
+head(localdata_minus_date)
+
+#Note - It doesn't matter for this data, so will do future analysis on the data that includes date,
+#but as a proof of concept this has value.
+
+```
+
+### Factor Identification
+
+We could recode our factor data in pop_density as 0 and 1 if we wanted, and for some analysis
+this might be useful. We don't need to do this for our analysis, so let's recode the minus_date
+object we created above as practice.
+
+```{r}
+
+#First, confirm the data type for pop_density
+print("Before Conversion")
+
+class(localdata_minus_date$pop_density)
+
+head(localdata_minus_date$pop_density) #Note: just returns first few values
+
+summary(localdata_minus_date$pop_density) #Note: returns length, class, and mode
+
+#Convert to a factor - note, we could have created a new column and stored the factor version separately by:
+#localdata_minus_date$pop_density_factor <- factor(localdata_minus_date$pop_density), but it's easy enough
+#to switch back and forth so I'll just overwrite the values.
+
+localdata_minus_date$pop_density <- factor(localdata_minus_date$pop_density)
+
+
+
+#Confirm conversion
+
+print("After Conversion")
+
+class(localdata_minus_date$pop_density)
+
+head(localdata_minus_date$pop_density) #Now returns levels in addition to first few values
+
+summary(localdata_minus_date$pop_density) #Now returns a data table
+
+
+
+```
+
+### Factor Transformation
+
+Convert pop_density to a numeric value (easier now that this is a factor instead of character) and play with 1's and 0's.
+
+```{r}
+print("Replace factor labels with numeric values")
+
+as.numeric(localdata_minus_date$pop_density)
+
+#Factors get converted to 1's and 2's (or 3's and 2's??). Maybe because we started with a CSV
+#file this time? Interesting... We might want this to be 0's and 1's. If so, and if we don't care
+#which value gets coded as a 0, we can simply replace all the 2's with 0's, and everything else
+#as a 1. 
+
+print("Replacing the 2's with 0's and any other value with 1's")
+
+sapply(as.numeric(localdata_minus_date$pop_density), function(x) ifelse(x==2,0,1))
+
+#However, if you wanted to make all the 2's 1's, and the 1's (or 3's) 0's, turns out the same basic
+#function works with slight modification:
+
+print("Replacing all 2's with 1's, and 1's (or 3's), with 0's")
+
+sapply(as.numeric(localdata_minus_date$pop_density), function(x) ifelse(x==2,1,0))
+
+```
+
+### Remove Variables Except for localdata
+
+Let's clean up our global environment variables and free up some memory. The only object we need
+to store moving forward is localdata, so let's remove everything except that.
+
+
+```{r}
+
+
+#Demonstrate ls()
+
+print("***********Variables Before Cleanup**************")
+
+
+ls()
+
+#Demonstrate setdiff, which returns all values different from a given example
+
+setdiff(ls(), "localdata")
+
+#demonstrate rm() against setdiff list generated as a list on the fly
+
+rm(list=(setdiff(ls(), "localdata")))
+
+#The only variable remaining should be localdata
+
+print("***********Variables After Cleanup**************")
+
+ls()
+
+```
+
+
+### Table the Discussion
+
+Look at a table comparing the number of dense vs. sparse counties.
+
+
+```{r}
+#Numbers of dense vs sparse
+table(localdata$pop_density)
+
+```
+
+Now as a percentage:
+
+
+```{r}
+#percentage of dense vs sparse, *100 to give us a percent value, rounded to one decimal place
+round(prop.table(table(localdata$pop_density))*100,1)
+
+```
+
+### Multiverse Approach (tidyverse)
+
+Play with tidyverse methodology, just to show I'm paying attention (and learning things beyond what are demonstrated
+in the course videos... see inline comments.)
+
+```{r}
+#Do the percents in a different way - piping using %>%... old dog, new tricks - showing two different ways
+library(magrittr)
+
+print("dense vs. sparse county percentages")
+
+localdata$pop_density %>%
+  table() %>%
+  prop.table() %>%
+  multiply_by(100) %>%
+  round(1)  
+
+
+localdata$pop_density %>%
+  table(.) %>%
+  prop.table(.) %>%
+  multiply_by(., 100) %>%
+  round(., 1)  
+
+#Note -- the "." in the code above is only technically required by some functions, and only when a placeholder
+#for the preceding value is needed before specifying an option (such as the 100 in multiply_by or the 1 in
+#round). Not required in either case as you can see from the first example in this code block, however
+#I found it useful to write it out like this so that I could get a better sense of the logic in this new
+#way of formatting R code. If you're a "fewest characters possible" type of coder, you can omit it, however
+#there may be some functions that require it so just be aware.
+```
+
+
+### To SUM It All Up...
+
+OK, so shocker, the counties are heavily weighted towards sparse populations vs. densely
+populated areas. I'm curious though - how does the overall population break out then?
+
+(My old code used a loop to accomplish this. Has been updated to use a much better subsetting approach. Not 
+only does it code cleaner / easier, it would run significantly faster, especially if we were using a really 
+large data set. 
+
+```{r}
+
+sparse_total_pop <- sum(localdata$total_pop[localdata$pop_density=='sparse'], na.rm=T)
+
+dense_total_pop <- sum(localdata$total_pop[localdata$pop_density=='dense'], na.rm=T)
+
+print(paste0("dense county total population = ", dense_total_pop))
+print(paste0("sparse county total population = ", sparse_total_pop))
+
+```
+
+Interesting. So the population in sparse vs. densely populated counties is pretty close to the same. This may
+come in handy later. Let's do a couple more like this and check the difference between cases and deaths in the
+dense vs. sparse populations.
+
+```{r}
+# So pretty... Added the format function to add the commas to make numbers easier to read to boot.
+
+dense_total_deaths <- sum(localdata$deaths[localdata$pop_density=='dense'], na.rm = T)
+sparse_total_deaths <- sum(localdata$deaths[localdata$pop_density=='sparse'], na.rm = T)
+dense_total_cases <- sum(localdata$confirmed_cases[localdata$pop_density=='dense'], na.rm = T)
+sparse_total_cases <- sum(localdata$confirmed_cases[localdata$pop_density=='sparse'], na.rm = T)
+
+print(paste0("dense county total population = ", format(dense_total_pop,big.mark = ",")))
+print(paste0("dense county total cases = ", format(dense_total_cases,big.mark = ",")))
+print(paste0("dense county total deaths = ", format(dense_total_deaths,big.mark = ",")))
+print(paste0("sparse county total population = ", format(sparse_total_pop,big.mark = ",")))
+print(paste0("sparse county total cases = ", format(sparse_total_cases,big.mark = ",")))
+print(paste0("sparse county total deaths = ", format(sparse_total_deaths,big.mark = ",")))
+
+```
+
+### Let's tapply Ourselves, Shall We?
+
+We could also have done this and created tables instead of independent variables using tapply
+and grouping the sums by the pop_density value. This makes makes tabling and using the data for other
+things in the future a little easier, perhaps.
+
+The tapply function takes three main entries - the data you want to do something to, the value you want to sort by, and
+the thing you want to do to the data. Note, for deaths, I have to also add the na.rm=T again
+
+```{r}
+
+popbreakdown <- tapply(localdata$total_pop, localdata$pop_density, sum)
+casesbreakdown <- tapply(localdata$confirmed_cases, localdata$pop_density, sum)
+deathsbreakdown <- tapply(localdata$deaths, localdata$pop_density, sum, na.rm=T) 
+
+format(popbreakdown,big.mark = ",")
+format(casesbreakdown,big.mark = ",")
+format(deathsbreakdown,big.mark = ",")
+```
+
+Let's combine those tapply results into a dataframe for easier comparison and rework it to our purposes.
+
+```{r}
+
+numcompare <- data.frame(population=popbreakdown, cases=casesbreakdown, deaths=deathsbreakdown)
+format(numcompare,big.mark = ",")
+
+#What if we want to transpose the dataframe and use dense and sparse as our column labels?
+#A matrix can be transposed using the t function. So we can read numcompare as a matrix then
+#transpose it. However, if we want to read it back as a data frame, we have to convert it back at the end.
+
+numcompare_transposed <- as.data.frame(t(as.matrix(numcompare)))
+format(numcompare_transposed,big.mark = ",")
+
+
+#Note - the data.table library also contains a transpose function, however using this would have 
+#lost our column labels, whereas the matrix transpose feature retains them.
+
+```
+
+```{r}
+#Now we can pull an individual value based on labels, if we wanted to
+
+numcompare_transposed["population","dense"]
+
+```
+
+## Test Your Assumptions
+
+OK, so at a quick glance, the numbers of the total population between dense and sparse populated counties don't
+appear to be that different. But in my experience, humans - including, and sometemes especially me - are
+inherently bad at statistical thinking. I'm not sure whether I can trust my initial judgement here or not.
+Let's run some analysis and see if our eyes deceive us or not.
+
+To determine if we can use a parametric test for analysis, we need to see if our data are normally distributed.
+The value I'm interested in will be either death rate or case rate per total population. 
+
+### Normality Test: Histogram
+
+Let's look at a quick histogram of the deaths and cases per 1k columns and see if we are dealing with a normal
+distribution or not.
+
+```{r}
+hist(localdata$death_per_1k)
+
+```
+
+```{r}
+hist(localdata$cases_per_1k)
+
+```
+
+In both cases, our data skew pretty heavily to the right, so tests like t-test and anova are **not** going to be
+appropriate measures for this data. 
+
+### Plots
+
+```{r}
+
+boxplot(localdata$cases_per_1k)
+plot(localdata$cases_per_1k)
+
+```
+
+
+### Normality Test: Shapiro-Wilk
+
+We can further validate our visual assessment with the Shapiro-Wilk normality test. This test produces a
+p-value, and if that p-value is less than 0.05, we conclude that the data is **not** normally distributed. 
+
+```{r}
+
+shapiro.test(localdata$cases_per_1k)
+
+```
+
+Our p-value is a lot lower than 0.05, so we can conclude with a significant degree of certainty that our data
+is not normally distributed.
+
+### Kurtosis
+
+Another test we can run is to check for kurtosis - a measure of whether data are heavily tailed or light tailed
+relative to normal distribution. If our data tails as we would expect in a normal distribution, this will
+produce a value that is close to 0, and for evaluation purposes, should fit within a value of -2 to 2. Let's
+look at our cases per 1k and see what we get:
+
+```{r}
+library(e1071)
+
+e1071::kurtosis(localdata$cases_per_1k, na.rm=TRUE)
+
+```
+
+A value of 3 is outside the boundaries, so this further confirms for us our data are not appropriate for parametric tests.
+
+### Skewness
+
+Another test is to look at skewness. Again, we are looking for a value of -2 to 2, which this time would indicate 
+that our data are relatively symmetrical.
+
+```{r}
+
+e1071::skewness(localdata$cases_per_1k, na.rm = TRUE)
+
+```
+
+I ran this one to show the value of evaluating the data from multiple angles to determine normal distribution.
+According to the skewness test, our data does pass for this test of normal distribution, which should not be a
+surprise given our histogram (other than the grouping to the left and the really long tail to the right, it did
+have symmetry to it). In other words, if we look at our mean and median values (or, since the numbers are so
+small, the log of those values is probably easier to read), they should be fairly similar.
+
+Let's check:
+
+```{r}
+
+summary(log(localdata$cases_per_1k))
+
+```
+
+So as you can see, our data for cases per 1k does actually have a mean and median value that are pretty 
+similar. Still, failing kurtosis and our basic visual check is enough here to rule out normal distribution of
+the data. Therefore, we cannot use parametric statistical tests to evaluate them.
+
+### More Kurtosis and Skewness: J-B Test
+
+The Jarque Bera test is interesting because it combines the skewness and kurtosis tests we ran earlier,
+generating a p-value that we continue to evaluate in the same way - less than 0.05, data are out of line for
+parametric testing. 
+
+```{r}
+library(DescTools)
+
+jbout <- DescTools::JarqueBeraTest(localdata$cases_per_1k, na.rm=TRUE)
+
+str(jbout)
+
+print("Null Hypothese Accept? Press 1 for Yes.") 
+print(jbout$p.value)
+```
+
+Even though the data were not significantly skewed, the kurtosis produced a correct p-value for our analysis.
+If you ran the code prior to putting it in a variable, you would see that the p value is very, very small instead of 0. 
+It's just a lot of output. I believe the 0 here means reject the null hypothesis, rather than representing an actual value.
+
+## More Normality Than You Can Shake a Stick At
+
+This got me interested in looking at what other types of normality tests existed, and I'm included a few more
+that I found interesting. (Leave it to me to make normality weird...)
+
+### Normality Test: Density Plot (Histogram alternative)
+
+Density plot - does your data have a bell-shaped curve?
+
+```{r}
+library(ggpubr)
+
+ggpubr::ggdensity(localdata$cases_per_1k)
+
+```
+
+### Normality Test: Q-Q Plot
+
+Q-Q plot (quantile-quantile plot) - do my data fit a normal distribution? (Note the outliers off the line 
+at the end.)
+
+```{r}
+
+ggpubr::ggqqplot(localdata$cases_per_1k)
+
+qqnorm(localdata$cases_per_1k)
+
+
+```
+
+### Normality Test: K-S Test / Lilliefors Test
+
+The Kolmogorov-Smirnov test (ks.test when run with "pnorm" as the y value, or run the Lilliefors equivalent) is
+similar to the Shapiro-Wilk test, in which normality is determined by looking for a p-value greater than 0.05.
+Less than that, and you reject the hypothesis that the data are normally distributed. It expects continuous
+distributions, and since our data are not continuous distributions, they contain "ties" in terms of data
+points. It's not a test we would run to interpret this data, but I'm including it here just for completeness.
+
+Two different versions, just for fun:
+
+```{r}
+
+ks.test(localdata$cases_per_1k, "pnorm")
+
+library(nortest)
+
+lillie.test(localdata$cases_per_1k)
+
+```
+
+
+
+### Normality Test: A-D Test
+
+The Anderson Darling test - again, looking at the p-value.
+
+```{r}
+
+library(nortest)
+
+nortest::ad.test(localdata$cases_per_1k)
+
+```
+
+
+## Pick the Right Kind of Test
+
+### Poisson Regression Model
+
+Oftentimes, the ‘most legit’ approach would be to use a univariable poisson regression model with an offset for
+the denominator – the outcome is just case counts. Instead of calculating the rate and then testing
+differences in the standardized rate between density groups, just input the raw numbers (the default ~ link
+function uses models log values) and use the log of the total population as an offset, which means the
+'normalization' is done for you. (Copied liberally from an email from Dr. Wiemken)
+
+It executes as follows:
+
+```{r}
+
+deathresults <- glm(localdata$deaths ~ localdata$pop_density + offset(log(localdata$total_pop)), family='poisson')
+summary(deathresults)
+
+caseresults <- glm(localdata$confirmed_cases ~ localdata$pop_density + offset(log(localdata$total_pop)), family='poisson')
+summary(caseresults)
+
+```
+
+### Interpreting the Results
+
+There are two points of interest in these results for each test - the p-variable and the estimate.
+
+A p-value of less than 0.05 indicates that our results are statistically significant. For both tests, our
+p-value is waaaay below 0.05, so we **are** seeing a difference between sparse and densely populated counties.
+
+The Estimate value is what tells us what the impact of our variable (population density) would be on the outcome 
+(the log of the rates of cases or deaths). Since the value returned is actually a log value, we need to calculate 
+the exponential to show what the effect is. 
+
+```{r}
+print("deaths")
+exp(-0.009371)
+print("cases")
+exp(-0.0336676)
+
+```
+
+The way we would interpret that is as follows: For individuals living in sparsely populated counties, you have a 
+1% lower rate of death due to COVID-19 vs. the rate for individuals living in a densely populated county. This 
+would align with our base understanding of how diseases spread, perhaps - the closer together people are, the 
+easier it is for a virus to transmit from one person to another. So a drop in the rates of transmission and death 
+are to be expected. (By the way, we get the rate here because we offset by total population. If we did not have 
+the offset in our formula, the result would mean a 1% lower count of deaths.)
+
+What is interesting, and would bear further analysis, is that while the rates of COVID-19 deaths are 1% lower
+in sparsely populated counties, the rates of testing positive for COVID-19 in the first place are actually
+about 3.5% lower. So if you test positive for COVID-19 in a sparsely populated county, it would appear you're 
+actually slightly more likely to die from it. Again, fascinating.
+
+Fascinating, that is, if we can trust these results at all. **<cue dark music>**
+
+### Don't Believe Everything You Read On The Internet 
+
+*Test the Poisson Assumptions*
+
+Poisson makes a couple of strict assumptions, one of them being that mean and variance of the outcome variables
+(confirmed_cases and death values) are equal - i.e. normally distributed. 
+
+Now that we've done all of this work, let's go back and check to see if these base assumptions are accurate. 
+If not, we can infer nothing from these results.
+
+To evaluate from the output given, we need to look at residual deviance and degrees of freedom. If our data are 
+anything close to a Poisson distribution, if we divide residual deviance by degrees of freedom, we should get 
+something very close to 1. If we look at those values in our output for case results, for example, we see that 
+residual deviance is 2,570,419  on 3,209  degrees of freedom.
+
+Oops. (Of course, we already knew that from our normality tests, right?)
+
+Those numbers are way too far apart for our Poisson distributed data assumption. Similar story for the death results as well. Therefore, we have to discard our results from Poisson and try something else.
+
+### Negative Binomial Model
+
+We pivot to Negative Binomial, from the MASS package, which is similar to the Poisson but does not make assumptions about mean and variance being equal in the predicted values. 
+
+```{r}
+library(MASS)
+
+deathresultsnb <- glm.nb(localdata$deaths ~ localdata$pop_density + offset(log(localdata$total_pop)))
+summary(deathresultsnb)
+
+caseresultsnb <- glm.nb(localdata$confirmed_cases ~ localdata$pop_density + offset(log(localdata$total_pop)))
+summary(caseresultsnb)
+```
+
+
+### Interpreting the **CORRECT** Results
+
+As with our Poisson analysis, there are two points of interest in these results for each test - the p-variable and
+the estimate.
+
+As before, a p-value of less than 0.05 indicates that our results are statistically significant. For both tests,
+our p-value is waaaay below 0.05, so we **are** seeing a difference between sparse and densely populated counties.
+
+The Estimate value is what tells us what the expected difference between our variables (sparse vs. dense) would
+be. Since the value returned is actually offset by the log of the total population, we need to calculate the
+exponential to determine what the effect is.
+
+```{r}
+
+#When we looked at Poisson, we just copied and pasted in the estimate. Now let's do something a little more
+#sophisticated by looking at the structure of our outputs, and then using the appropriate variable name in
+#our eval.
+
+#They'll both be the same structure, so we'll just look at one of them.
+
+str(caseresultsnb)
+
+#We see that the value we are looking for is stored in a field named coefficients. Take a look at that.
+
+str(caseresultsnb$coefficients)
+
+#OK, now see if we can pull just the estimate, which is in the second position:
+
+caseresultsnb$coefficients[2]
+
+#Sweet. So now we know how to pull the value we want from the results - no more copy and paste!
+
+print("deaths")
+exp(deathresultsnb$coefficients[2])
+
+print("cases")
+exp(caseresultsnb$coefficients[2])
+
+
+
+
+```
+
+### KATY BAR THE DOOR!
+
+Poisson, because it makes assumptions about the data that in our case are invalid, led us to EXACTLY the 
+opposite of reality. If you live in a sparsely populated county, rate of catching COVID-19 is *higher* by about 
+5%, and the rate of death goes up by a whopping 14%!!
+
+Since the negative binomial model doesn't make the same assumptions that Poisson makes, we are basically done 
+here. (Note to self: next time start with Negative Binomial? When would Poisson be preferred?) 
+
+Wow, what a difference making the wrong assumptions can make!
+
+
+### Confidence Interval
+
+The confidence interval.... how sure are we that our results are withing 2 standard deviations of the mean?
+i.e. what values are our results going to fall between approximately 95% of the time?
+
+```{r}
+#confint, but since log, need to exp...
+print("Death Rate CI")
+exp(confint(deathresultsnb))
+print("Case Rate CI")
+exp(confint(caseresultsnb))
+
+
+```
+
+Here we see that our death rate prediction should be between 3% and 25% higher 95% of the time. 
+
+Interestingly, case rate at the unlikely low end of the confidence interval might actually drop to just 
+under 1% *lower* depending on exactly what data was sampled (which makes it fascinating that the death
+rate still ends up higher. More analysis required!)
+
+## Summary
+
+This document has walked through a number of different ways to analyze, manipulate, and transform data. It has
+performed some descriptive analytics and discussed how to interpret the results.
+
